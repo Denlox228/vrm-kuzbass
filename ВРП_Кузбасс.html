@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ВРП Кемеровской области — анализ 1998–2024</title>
+
+<!-- Библиотеки с CDN (нужен интернет при первом открытии) -->
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: #0b1220; color: #e2e8f0;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 12px; color: #cbd5e1; font-weight: 600; }
+  .muted { color: #94a3b8; font-size: 13px; }
+  header { margin-bottom: 18px; }
+
+  button {
+    background: #1d4ed8; color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 14px; font-size: 14px; cursor: pointer; font-family: inherit;
+  }
+  button:hover { background: #2563eb; }
+  button.ghost { background: #1e293b; }
+  button.ghost:hover { background: #273449; }
+
+  .drop { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 22px; }
+
+  .cards {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 12px; margin-bottom: 20px;
+  }
+  .kpi { background: #111c2e; border: 1px solid #1f2c44; border-radius: 12px; padding: 14px 16px; }
+  .kpi .t { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: .05em; }
+  .kpi .v { font-size: 22px; font-weight: 700; margin: 5px 0 2px; color: #7dd3fc; }
+  .kpi .s { font-size: 12px; color: #64748b; }
+
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: 16px; margin-bottom: 20px;
+  }
+  .card { background: #111c2e; border: 1px solid #1f2c44; border-radius: 12px; padding: 16px; }
+  .card canvas { width: 100% !important; height: 300px !important; }
+
+  .table-wrap { overflow: auto; max-height: 540px; border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid #1f2c44; white-space: nowrap; }
+  th { position: sticky; top: 0; background: #17223a; z-index: 1; }
+  th:first-child, td:first-child { text-align: left; }
+  tbody tr:hover td { background: #16213a; }
+  .pos { color: #4ade80; }
+  .neg { color: #f87171; }
+
+  #app[hidden] { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Валовой региональный продукт Кемеровской области — Кузбасса</h1>
+  <p class="muted">Загрузите CSV-файл или посмотрите встроенные данные</p>
+</header>
+
+<section class="drop">
+  <input type="file" id="file" accept=".csv,text/csv" hidden>
+  <button id="pick">Выбрать CSV-файл</button>
+  <button id="sample" class="ghost">Встроенные данные</button>
+  <span id="status" class="muted"></span>
+</section>
+
+<main id="app" hidden>
+  <section id="cards" class="cards"></section>
+
+  <section class="grid">
+    <div class="card"><h2>ИФО ВРП, % к предыдущему году</h2><canvas id="c1"></canvas></div>
+    <div class="card"><h2>ВРП в текущих ценах, млн ₽</h2><canvas id="c2"></canvas></div>
+    <div class="card"><h2>ВРП в базовых ценах, млн ₽</h2><canvas id="c3"></canvas></div>
+    <div class="card"><h2>Дефлятор (тек. / баз. × 100), %</h2><canvas id="c4"></canvas></div>
+  </section>
+
+  <section class="card">
+    <h2>Таблица показателей по годам</h2>
+    <div class="table-wrap"><table id="table"></table></div>
+  </section>
+</main>
+
+<script>
+/* ------------------------------------------------------------------
+   1. ВСТРОЕННЫЕ ДАННЫЕ (на случай, если файла под рукой нет)
+------------------------------------------------------------------ */
+const SAMPLE_CSV = `;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Кемеровская область-Кузбасс;1998;1999;2000;2001;2002;2003;2004;2005;2006;2007;2008;2009;2010;2011;2012;2013;2014;2015;2016;2017;2018;2019;2020;2021;2022;2023;2024
+ИФО Валового регионального продукта в период с 1998-2024гг..(% к предыдущему году);91,9;108,2;106,8;104,6;103,8;107,0;104,7;106,8;107,2;106,8;102,1;92,9;102,7;102,3;95,8;96,0;102,1;99,0;97,0;102,1;102,2;100,1;96,2;107,0;99,3;99,6;97,6
+"ВРП по субъектам РФ в действительных ценах в период с 1998-2024 гг.. (в текущих  ценах; миллионов рублей)";42 890,2;64 491,4;88 728,1;113 800,2;136 156,7;164 903,1;244 462,0;295 378,4;342 210,6;437 790,2;575 901,9;512 408,0;625 914,9;751 198,4;718 320,4;667 950,5;752 024,0;843 345,4;903 675,2;1 118 062,6;1 290 616,5;1 133 857,3;1 069 131,7;1 847 571,4;2 191 098,2;1 908 425,2;1 818 575,9
+"ВРП по субъектам РФ в базовых ценах в период с 1998-2024 гг.. (в текущих  ценах; миллионов рублей)";42 890,2;46 407,2;49 562,9;51 842,8;53 812,8;57 579,7;60 285,9;64 385,4;69 021,1;73 714,6;75 262,6;69 918,9;71 806,8;73 458,3;70 373,1;67 558,1;68 976,9;68 287,1;66 238,5;67 629,5;69 117,3;69 186,4;66 557,4;71 216,4;70 717,9;70 435,0;68 744,6`;
+
+/* ------------------------------------------------------------------
+   2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+------------------------------------------------------------------ */
+const fmtInt = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
+const fmt1   = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const fmt2   = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** "42 890,2" -> 42890.2 ; пусто -> null */
+function parseNumber(s) {
+  if (s == null) return null;
+  s = String(s).replace(/^\uFEFF/, '').trim().replace(/\s|\u00A0/g, '').replace(',', '.');
+  if (s === '' || s === '-') return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Чтение файла с автоопределением кодировки UTF-8 / Windows-1251 */
+async function readFile(file) {
+  const buf = await file.arrayBuffer();
+  let text = new TextDecoder('utf-8').decode(buf);
+  if (text.includes('\uFFFD')) text = new TextDecoder('windows-1251').decode(buf);
+  return text;
+}
+
+/** Разбор CSV: находим строку с годами, всё ниже — показатели */
+function parseCsv(text) {
+  const res = Papa.parse(text, { delimiter: ';', skipEmptyLines: 'greedy' });
+
+  let headerIdx = -1;
+  for (let i = 0; i < res.data.length; i++) {
+    const row = res.data[i] || [];
+    const yearCells = row.filter(c => /^\d{4}$/.test(String(c).trim())).length;
+    if (yearCells >= 3) { headerIdx = i; break; }
+  }
+  if (headerIdx === -1) throw new Error('Не найдена строка с годами (1998, 1999, …)');
+
+  const header = res.data[headerIdx].map(c => String(c ?? '').trim());
+  const years = header.slice(1).filter(y => /^\d{4}$/.test(y));
+
+  const rows = [];
+  for (let i = headerIdx + 1; i < res.data.length; i++) {
+    const r = res.data[i] || [];
+    const label = String(r[0] ?? '').replace(/^\uFEFF/, '').trim();
+    if (!label) continue;
+    const values = years.map((_, j) => parseNumber(r[j + 1]));
+    rows.push({ label, values });
+  }
+  return { years, rows };
+}
+
+const pickRow = (rows, re) => rows.find(r => re.test(r.label));
+
+/** Среднегодовой темп прироста, % */
+function cagr(values, years) {
+  const pts = [];
+  values.forEach((v, i) => { if (v != null && v > 0) pts.push({ v, y: +years[i] }); });
+  if (pts.length < 2) return null;
+  const a = pts[0], b = pts[pts.length - 1];
+  const n = b.y - a.y;
+  return n > 0 ? (Math.pow(b.v / a.v, 1 / n) - 1) * 100 : null;
+}
+
+function minMax(values, years) {
+  let mn = null, mx = null, minYear = '', maxYear = '';
+  values.forEach((v, i) => {
+    if (v == null) return;
+    if (mn === null || v < mn) { mn = v; minYear = years[i]; }
+    if (mx === null || v > mx) { mx = v; maxYear = years[i]; }
+  });
+  return { min: mn, max: mx, minYear, maxYear };
+}
+
+/* ------------------------------------------------------------------
+   3. ГРАФИКИ
+------------------------------------------------------------------ */
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.borderColor = 'rgba(148,163,184,.12)';
+Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+
+const charts = {};
+function makeChart(id, config) {
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(document.getElementById(id), config);
+}
+
+const tooltipNum = { callbacks: { label: c => `${c.dataset.label}: ${fmt1.format(c.parsed.y)}` } };
+
+function drawCharts(years, rows) {
+  const ifo  = pickRow(rows, /ИФО/i);
+  const nom  = pickRow(rows, /действительных/i);
+  const base = pickRow(rows, /базовых/i);
+
+  // --- 1. ИФО ---
+  if (ifo) {
+    makeChart('c1', {
+      type: 'bar',
+      data: {
+        labels: years,
+        datasets: [{
+          label: 'ИФО, %',
+          data: ifo.values,
+          backgroundColor: ifo.values.map(v =>
+            v == null ? '#334155' : v >= 100 ? 'rgba(74,222,128,.75)' : 'rgba(248,113,113,.8)'),
+          borderRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false }, tooltip: tooltipNum },
+        scales: {
+          y: { title: { display: true, text: '% к предыдущему году' }, suggestedMin: 85, suggestedMax: 115 }
+        }
+      }
+    });
+  }
+
+  // --- 2. ВРП в текущих ценах ---
+  if (nom) {
+    makeChart('c2', {
+      type: 'line',
+      data: {
+        labels: years,
+        datasets: [{
+          label: 'ВРП, млн ₽',
+          data: nom.values,
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,.15)',
+          fill: true, tension: .3, pointRadius: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false }, tooltip: tooltipNum },
+        scales: { y: { title: { display: true, text: 'млн ₽' } } }
+      }
+    });
+  }
+
+  // --- 3. ВРП в базовых ценах ---
+  if (base) {
+    makeChart('c3', {
+      type: 'line',
+      data: {
+        labels: years,
+        datasets: [{
+          label: 'ВРП (баз. цены), млн ₽',
+          data: base.values,
+          borderColor: '#f472b6',
+          backgroundColor: 'rgba(244,114,182,.15)',
+          fill: true, tension: .3, pointRadius: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false }, tooltip: tooltipNum },
+        scales: { y: { title: { display: true, text: 'млн ₽' } } }
+      }
+    });
+  }
+
+  // --- 4. Дефлятор ---
+  if (nom && base) {
+    const defl = nom.values.map((v, i) =>
+      (v != null && base.values[i]) ? (v / base.values[i]) * 100 : null);
+
+    makeChart('c4', {
+      type: 'line',
+      data: {
+        labels: years,
+        datasets: [{
+          label: 'Дефлятор, %',
+          data: defl,
+          borderColor: '#fbbf24',
+          backgroundColor: 'rgba(251,191,36,.15)',
+          fill: true, tension: .3, pointRadius: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${fmtInt.format(c.parsed.y)} %` } } },
+        scales: { y: { title: { display: true, text: '% к 1998 году' } } }
+      }
+    });
+  }
+}
+
+/* ------------------------------------------------------------------
+   4. KPI-КАРТОЧКИ
+------------------------------------------------------------------ */
+function drawCards(years, rows) {
+  const wrap = document.getElementById('cards');
+  wrap.innerHTML = '';
+
+  const add = (title, value, sub = '') => {
+    const el = document.createElement('div');
+    el.className = 'kpi';
+    el.innerHTML = '<div class="t"></div><div class="v"></div><div class="s"></div>';
+    el.querySelector('.t').textContent = title;
+    el.querySelector('.v').textContent = value;
+    el.querySelector('.s').textContent = sub;
+    wrap.appendChild(el);
+  };
+
+  const ifo  = pickRow(rows, /ИФО/i);
+  const nom  = pickRow(rows, /действительных/i);
+  const base = pickRow(rows, /базовых/i);
+  const y0 = years[0], yN = years[years.length - 1];
+
+  if (ifo) {
+    const vals = ifo.values.filter(v => v != null);
+    const geo = Math.pow(vals.reduce((p, v) => p * v / 100, 1), 1 / vals.length) * 100;
+    const mm = minMax(ifo.values, years);
+    add('Средний ИФО', fmt1.format(geo) + ' %', `${y0}–${yN}`);
+    add('Максимум ИФО', fmt1.format(mm.max) + ' %', mm.maxYear);
+    add('Минимум ИФО', fmt1.format(mm.min) + ' %', mm.minYear);
+  }
+
+  if (nom) {
+    const g = cagr(nom.values, years);
+    if (g != null) add('CAGR ВРП (тек. цены)', fmt2.format(g) + ' %', 'среднегодовой прирост');
+    const first = nom.values.find(v => v != null);
+    const last  = [...nom.values].reverse().find(v => v != null);
+    if (first && last) add('Рост ВРП (тек. цены)', '×' + fmt2.format(last / first), `${y0} → ${yN}`);
+  }
+
+  if (base) {
+    const g = cagr(base.values, years);
+    if (g != null) add('CAGR ВРП (баз. цены)', fmt2.format(g) + ' %', 'реальный прирост');
+    const first = base.values.find(v => v != null);
+    const last  = [...base.values].reverse().find(v => v != null);
+    if (first && last) add('Рост ВРП (баз. цены)', '×' + fmt2.format(last / first), `${y0} → ${yN}`);
+  }
+
+  if (nom && base) {
+    const d = nom.values
+      .map((v, i) => (v != null && base.values[i]) ? v / base.values[i] : null)
+      .filter(v => v != null);
+    if (d.length > 1) add('Накопленный дефлятор', '×' + fmt2.format(d[d.length - 1] / d[0]), `${y0} → ${yN}`);
+  }
+}
+
+/* ------------------------------------------------------------------
+   5. ТАБЛИЦА (годы в строках — так читается удобнее)
+------------------------------------------------------------------ */
+function drawTable(years, rows) {
+  const ifo  = pickRow(rows, /ИФО/i);
+  const nom  = pickRow(rows, /действительных/i);
+  const base = pickRow(rows, /базовых/i);
+  const defl = (nom && base)
+    ? nom.values.map((v, i) => (v != null && base.values[i]) ? (v / base.values[i]) * 100 : null)
+    : null;
+
+  const table = document.getElementById('table');
+  table.innerHTML = '';
+
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  ['Год', 'ИФО, %', 'ВРП в текущих ценах, млн ₽', 'ВРП в базовых ценах, млн ₽', 'Дефлятор, %']
+    .forEach(t => { const th = document.createElement('th'); th.textContent = t; trh.appendChild(th); });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  years.forEach((year, i) => {
+    const tr = document.createElement('tr');
+    const tdYear = document.createElement('td');
+    tdYear.textContent = year;
+    tr.appendChild(tdYear);
+
+    const cells = [
+      ifo  ? ifo.values[i]  : null,
+      nom  ? nom.values[i]  : null,
+      base ? base.values[i] : null,
+      defl ? defl[i]        : null
+    ];
+
+    cells.forEach((v, j) => {
+      const td = document.createElement('td');
+      if (v == null) {
+        td.textContent = '—';
+      } else if (j === 0) {
+        td.textContent = fmt1.format(v);
+        td.className = v >= 100 ? 'pos' : 'neg';
+      } else if (j === 1 || j === 2) {
+        td.textContent = fmt1.format(v);
+      } else {
+        td.textContent = fmtInt.format(v);
+      }
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+}
+
+/* ------------------------------------------------------------------
+   6. ГЛАВНЫЙ РЕНДЕР
+------------------------------------------------------------------ */
+function render(text, sourceName) {
+  try {
+    const { years, rows } = parseCsv(text);
+    if (!years.length || !rows.length) throw new Error('В файле не найдено данных');
+
+    document.getElementById('status').textContent =
+      `Источник: ${sourceName} · показателей: ${rows.length} · лет: ${years.length}`;
+    document.getElementById('app').hidden = false;
+
+    drawCards(years, rows);
+    drawCharts(years, rows);
+    drawTable(years, rows);
+  } catch (err) {
+    console.error(err);
+    alert('Не удалось разобрать файл: ' + err.message);
+  }
+}
+
+/* ------------------------------------------------------------------
+   7. СОБЫТИЯ
+------------------------------------------------------------------ */
+document.getElementById('pick').addEventListener('click', () => document.getElementById('file').click());
+
+document.getElementById('file').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  render(await readFile(file), file.name);
+});
+
+document.getElementById('sample').addEventListener('click', () => render(SAMPLE_CSV, 'встроенные данные'));
+
+// Drag & drop на всю страницу
+['dragover', 'drop'].forEach(ev => document.addEventListener(ev, e => e.preventDefault()));
+document.addEventListener('drop', async e => {
+  const file = e.dataTransfer?.files?.[0];
+  if (file) render(await readFile(file), file.name);
+});
+</script>
+</body>
+</html>
